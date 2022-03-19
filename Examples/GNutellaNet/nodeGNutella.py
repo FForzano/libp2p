@@ -1,9 +1,9 @@
-from multiprocessing.dummy import connection
 from nodeP2P import nodeP2P
 from pktTracker import pktTracker
 from utils import recvall
 import os
 from pktTracker import pktTracker
+import ipaddress, hashlib
 
 class nodeGNutella(nodeP2P):
     shared_files = {} # {md5:file_name}
@@ -50,7 +50,52 @@ class nodeGNutella(nodeP2P):
             
 
     def client_function(self):
-        pass
+        try:
+            while True:
+                try:
+                    print("Avaible commands:")
+                    print("\tSHARE: share new file;\n\tNEAR: find near peer;\n\tFIND: find a file;\n\tRETR: download a file.")
+
+                    command = input("Command: ")
+
+                    if command == "SHARE":
+                        file_name = input("Insert the file name: ")
+                        file_md5 = ""
+                        if len(file_name) > 100:
+                            print("Please insert a name with length less then 100 characters")
+                            continue
+                        file = 0
+                        try:
+                            file = open(file_name,"rb")
+                            file_md5 = hashlib.md5(file.read()).hexdigest()
+                            file.close()
+                        except FileNotFoundError:
+                            print(file_name + " not found.")
+                            continue
+                        except Exception as e:
+                            file.close()
+                            print(e)
+                            continue
+                        self.shared_files[file_md5] = file_name
+                                               
+
+                    elif command == "NEAR":
+                        pass
+
+                    elif command == "FIND":
+                        pass
+
+                    elif command == "RETR":
+                        pass
+
+                    else:
+                        print("Invalid command.")
+
+                except Exception as error:
+                    print("Error occurs: ", error)
+
+        except KeyboardInterrupt:
+            print("Bye!")
 
 
     def _function_RETR_server(self, connection):
@@ -81,7 +126,7 @@ class nodeGNutella(nodeP2P):
             print(e)
             print("Aborting download...")
         finally:
-            if not f is None:
+            if not f is None:                                       
                 f.close()
             connection.close()
 
@@ -204,6 +249,13 @@ class nodeGNutella(nodeP2P):
     def is_same_peer(mittent, addr):
         [addr4,addr6] = addr[0].split('|')
         port = addr[1]
+
+        if ':' in mittent[0]: # ipv6 address
+            mittent[0] = ipaddress.ip_address(mittent[0])
+            mittent[0] = mittent[0].exploded
+        else:
+            mittent[0] = '%03d' %int(mittent[0].split('.')[0]) + '.' + '%03d' %int(mittent[0].split('.')[1]) + '.' + '%03d' %int(mittent[0].split('.')[2]) + '.' + '%03d' %int(mittent[0].split('.')[3])
+            
 
         if mittent[0] == addr4 or mittent[0] == addr6:
             if mittent[1] == port:
