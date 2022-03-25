@@ -9,7 +9,7 @@ from portFinder import portFinder
 
 class nodeGNutella(nodeP2P):
     shared_files = {} # {md5:file_name}
-    near_peer = [('127.016.000.022|fc00:0000:0000:0000:0000:0000:0000:1004', 9001)] # [addr1,addr2,...] --> addr=(IP,Port:int)
+    near_peer = [('127.016.000.022|fc00:0000:0000:0000:0000:0000:0000:1004', 9002)] # [addr1,addr2,...] --> addr=(IP,Port:int)
     pktid_track = pktTracker(listen_time=10)
 
     def __init__(self,IPP2P_v4,IPP2P_v6,PP2P):
@@ -87,10 +87,10 @@ class nodeGNutella(nodeP2P):
                         self.NEAR_research()
 
                     elif command == "FIND":
-                        pass
+                        self.QUER_research()
 
                     elif command == "RETR":
-                        pass
+                        self.download_file()
 
                     else:
                         print("Invalid command.")
@@ -124,7 +124,7 @@ class nodeGNutella(nodeP2P):
             while chunk:
                 out = '%05d' %(len(chunk))
                 out = out.encode() + chunk
-                connection.sendall(out.encode())
+                connection.sendall(out)
                 chunk = f.read(max_chunk_size)
 
         except Exception as e:
@@ -151,27 +151,27 @@ class nodeGNutella(nodeP2P):
 
             # pkt forward
             if TTL != 1:
-                self._forward_pkt(pktid,(IPP2P,int(PP2P)),TTL-1,research, mit_address) # dovrò probabilmente passare anche da chi ho ricevuto il pacchetto
+                self._forward_pkt(pktid,(IPP2P,int(PP2P)),TTL-1,research, mit_address) 
             
             # check for file and send the answer
-            for md5,file_name in self.shared_files:
-                if research in file_name:
-                    rensponse_socket = self.connect2peer((IPP2P,int(PP2P)))
+            for md5 in self.shared_files.keys():
+                if research in self.shared_files[md5]:
+                    rensponse_socket = self.connect2peer((IPP2P.split('|')[random.choice([0,1])],int(PP2P)))
                     rensponse_socket.send(b'AQUE')
                     rensponse_socket.send(pktid.encode())
                     IP = self.IPP2P_v4 + "|" + self.IPP2P_v6
                     rensponse_socket.send(IP.encode())
-                    rensponse_socket.send(self.PP2P)
-                    rensponse_socket.send(md5)
-                    rensponse_socket.sendall(file_name.ljust(100))
+                    rensponse_socket.send(self.PP2P.encode())
+                    rensponse_socket.send(md5.encode())
+                    rensponse_socket.sendall(self.shared_files[md5].ljust(100).encode())
 
                     rensponse_socket.close()
 
         except Exception as e:
             print("Error occurs during file query.")
+            print(e)
             print("$> ", end='')
             sys.stdout.flush()
-            print(e)
         finally:
             if not connection is None:
                 connection.close()
@@ -269,7 +269,7 @@ class nodeGNutella(nodeP2P):
         for peer in self.near_peer:
             try:
                 connection = self.connect2peer( (peer[0].split('|')[random.choice([0,1])], peer[1]) )
-                connection.send(pkt)
+                connection.sendall(pkt)
             except Exception:
                 pass
             finally:
@@ -328,23 +328,23 @@ class nodeGNutella(nodeP2P):
     def QUER_research(self):
         letters = ascii_uppercase + digits
         pktid = ''.join(random.choice(letters) for i in range(16))
-        port = '%05d' %self.port_generator.give_port
+        port = '%05d' %self.port_generator.give_port()
         self.pktid_track.check_pkt(pktid,(self.IPP2P_v4 + "|" + self.IPP2P_v6, port)) # serve solo per evitare reinvii da parte mia
         
         research = input("Insert the name of file: ")
         
-        pkt = b'QUER' + pktid.encode() + self.IPP2P_v4.encode + "|".encode() + self.IPP2P_v6.encode() + port.encode() + "10".encode() + research.ljust(20).encode()
+        research_thread = threading.Thread(target=self._quer_research_thread, args=(port,))
+        research_thread.start()
+
+        pkt = b'QUER' + pktid.encode() + self.IPP2P_v4.encode() + "|".encode() + self.IPP2P_v6.encode() + port.encode() + "10".encode() + research.ljust(20).encode()
         for peer in self.near_peer:
             try:
-                connection, address = self.connect2peer( (peer[0].split('|')[random.choice([0,1])], peer[1]) )
-                connection.send(pkt)
+                connection = self.connect2peer( (peer[0].split('|')[random.choice([0,1])], peer[1]) )
+                connection.sendall(pkt)
             except Exception:
                 pass
             finally:
                 connection.close()
-
-        research_thread = threading.Thread(target=self._quer_research_thread, args=(port,))
-        research_thread.start()
 
     def _quer_research_thread(self, port):
         try:
@@ -361,6 +361,8 @@ class nodeGNutella(nodeP2P):
         start_time = int(time.time())
         received_peer = []
 
+        server_sock.settimeout(1)
+        conn = None
         while((int(time.time()) - self.pktid_track.get_listen_time()) < start_time):
             try:
                 conn,addr = server_sock.accept()
@@ -376,11 +378,12 @@ class nodeGNutella(nodeP2P):
             except:
                 pass
             finally:
-                conn.close()
+                if conn:
+                    conn.close()
         
         print("Finded peer for the selected file:")
         for near in received_peer:
-            print("\tIP: " + near[0] + "\tPORT: " + near[1] + "\n\t\tfile name: " + near[3] + "\t md5: " + near[2])
+            print("\tIP: ", near[0], "\tPORT: ", near[1], "\n\t\tfile name: ", near[3], "\t md5: ", near[2])
         print("$> ", end='')
         sys.stdout.flush()
 
@@ -409,3 +412,83 @@ class nodeGNutella(nodeP2P):
             raise e
 
         return False
+
+    def download_file(self):
+        file2download = input("Insert the md5 of the file that you want to download: ")
+        peer_address = input("Insert the IP address (IPv4|IPv6) of the selected peer: ")
+        
+        peer_port = input("Insert the port of the selected peer: ")
+        file_name = input("Insert the file name: ")
+
+        try:
+            if not os.path.isdir("Downloads"):
+                os.mkdir("Downloads")
+        except Exception:
+            print("Error occurs.")
+            self.quitEvent.set()
+            sys.exit(1)
+        
+        peer_address = peer_address.split('|')
+
+        # connection at the peer server for file download
+        random.shuffle(peer_address) # random choise between ipv4 and ipv6
+        address = (peer_address[0],peer_port)
+        print("Try to connect at", address[0])
+        
+        try:
+            peer_peer_socket = self.connect2peer(address)
+
+        except Exception:
+            peer_peer_socket = None
+        try:
+            if peer_peer_socket is None:
+                address = (peer_address[1],peer_port)
+                print("Connection refused. Try to connect at", address[0])
+                peer_peer_socket = self.connect2peer(address)
+            
+        except Exception:
+            peer_peer_socket = None
+
+        if peer_peer_socket is None:
+            print("Connection failed.")
+            print("$> ", end='')
+            sys.stdout.flush()
+
+        pkt = "RETR"+ file2download
+        peer_peer_socket.sendall(pkt.encode())
+        try:
+            downloaded_file = open("Downloads/"+file_name,"wb")
+            downloaded_file.seek(0)
+
+            recvall(peer_peer_socket, 4)
+            Nchunk_string = recvall(peer_peer_socket, 6).decode()
+            #print(Nchunk_string)
+            Nchunk = int(Nchunk_string)
+            for i in range(Nchunk):
+
+                # Download state bar
+                if Nchunk > 40 and i%int(Nchunk/40) == 0:
+                    print("#",sep='',end='')
+                    sys.stdout.flush()
+                elif Nchunk <= 40:
+                    print("#",sep='',end='')
+                    sys.stdout.flush()
+
+                len_chunk_string = recvall(peer_peer_socket, 5).decode()
+                len_chunk = int(len_chunk_string)
+
+                chunk = recvall(peer_peer_socket, len_chunk)
+
+                downloaded_file.write(chunk) 
+            
+            print("\nFile successfully downloaded")
+            print("$> ", end='')
+            sys.stdout.flush()
+        except OSError:
+            print("Error occurs during the download")
+            print("$> ", end='')
+            sys.stdout.flush()
+        finally:
+            if not downloaded_file.closed:
+                downloaded_file.close()
+            peer_peer_socket.close()
