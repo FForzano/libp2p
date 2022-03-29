@@ -9,8 +9,8 @@ from portFinder import portFinder
 
 class nodeGNutella(nodeP2P):
     shared_files = {} # {md5:file_name}
-    near_peer = [('127.016.000.022|fc00:0000:0000:0000:0000:0000:0000:1004', 9001)] # [addr1,addr2,...] --> addr=(IP,Port:int)
-    pktid_track = pktTracker(listen_time=10)
+    near_peer = [('127.016.000.022|fc00:0000:0000:0000:0000:0000:0000:1004', int(9001))] # [addr1,addr2,...] --> addr=(IP,Port:int)
+    pktid_track = pktTracker(listen_time=20)
 
     def __init__(self,IPP2P_v4,IPP2P_v6,PP2P):
         super().__init__(IPP2P_v4,IPP2P_v6,PP2P)
@@ -58,7 +58,7 @@ class nodeGNutella(nodeP2P):
             while True:
                 try:
                     print("Avaible commands:")
-                    print("\tSHARE: share new file;\n\tNEAR: find near peer;\n\tFIND: find a file;\n\tRETR: download a file.")
+                    print("\tSHARE: share new file; \n\tREMOVE: remove a shared file; \n\tLIST: list all the shared files; \n\tNEAR: find near peer;\n\tFIND: find a file;\n\tRETR: download a file; \n\tEXIT: close the node.")
 
                     command = input("$> ")
 
@@ -82,15 +82,26 @@ class nodeGNutella(nodeP2P):
                             continue
                         self.shared_files[file_md5] = file_name
                                                
+                    elif command == "REMOVE":
+                        file_md5 = input("Insert the file md5: ")
+                        del self.shared_files[file_md5]
+
+                    elif command == "LIST":
+                        print("Shared files are:")
+                        for md5,name in self.shared_files.items():
+                            print("\tFile name:", name, "\tmd5:", md5)
 
                     elif command == "NEAR":
                         self.NEAR_research()
 
                     elif command == "FIND":
-                        pass
+                        self.QUER_research()
 
                     elif command == "RETR":
-                        pass
+                        self.download_file()
+
+                    elif command == "EXIT":
+                        raise KeyboardInterrupt
 
                     else:
                         print("Invalid command.")
@@ -124,7 +135,7 @@ class nodeGNutella(nodeP2P):
             while chunk:
                 out = '%05d' %(len(chunk))
                 out = out.encode() + chunk
-                connection.sendall(out.encode())
+                connection.sendall(out)
                 chunk = f.read(max_chunk_size)
 
         except Exception as e:
@@ -149,29 +160,30 @@ class nodeGNutella(nodeP2P):
             research = research.strip()
             connection.close()
 
-            # pkt forward
-            if TTL != 1:
-                self._forward_pkt(pktid,(IPP2P,int(PP2P)),TTL-1,research, mit_address) # dovrò probabilmente passare anche da chi ho ricevuto il pacchetto
-            
-            # check for file and send the answer
-            for md5,file_name in self.shared_files:
-                if research in file_name:
-                    rensponse_socket = self.connect2peer((IPP2P,int(PP2P)))
-                    rensponse_socket.send(b'AQUE')
-                    rensponse_socket.send(pktid.encode())
-                    IP = self.IPP2P_v4 + "|" + self.IPP2P_v6
-                    rensponse_socket.send(IP.encode())
-                    rensponse_socket.send(self.PP2P)
-                    rensponse_socket.send(md5)
-                    rensponse_socket.sendall(file_name.ljust(100))
+            if self.pktid_track.check_pkt(pktid):
+                # pkt forward
+                if TTL != 1:
+                    self._forward_pkt(pktid,(IPP2P,int(PP2P)),TTL-1,research, mit_address) 
+                
+                # check for file and send the answer
+                for md5 in self.shared_files.keys():
+                    if research in self.shared_files[md5]:
+                        rensponse_socket = self.connect2peer((IPP2P.split('|')[random.choice([0,1])],int(PP2P)))
+                        rensponse_socket.send(b'AQUE')
+                        rensponse_socket.send(pktid.encode())
+                        IP = self.IPP2P_v4 + "|" + self.IPP2P_v6
+                        rensponse_socket.send(IP.encode())
+                        rensponse_socket.send(self.PP2P.encode())
+                        rensponse_socket.send(md5.encode())
+                        rensponse_socket.sendall(self.shared_files[md5].ljust(100).encode())
 
-                    rensponse_socket.close()
+                        rensponse_socket.close()
 
         except Exception as e:
             print("Error occurs during file query.")
+            print(e)
             print("$> ", end='')
             sys.stdout.flush()
-            print(e)
         finally:
             if not connection is None:
                 connection.close()
@@ -186,18 +198,19 @@ class nodeGNutella(nodeP2P):
             PP2P = recvall(connection, 5).decode()
             TTL = int(recvall(connection, 2))
 
-            # pkt forward
-            if TTL != 1:
-                self._forward_pkt(pktid,(IPP2P,int(PP2P)),TTL-1, "", mit_address)
-            
-            # answer
-            IPP2P = IPP2P.split('|')
-            rensponse_socket = self.connect2peer((IPP2P[random.choice([0,1])],int(PP2P)))
-            rensponse_socket.send(b'ANEA')
-            rensponse_socket.send(pktid.encode())
-            IP = self.IPP2P_v4 + "|" + self.IPP2P_v6
-            rensponse_socket.send(IP.encode())
-            rensponse_socket.send(self.PP2P.encode())
+            if self.pktid_track.check_pkt(pktid):
+                # pkt forward
+                if TTL != 1:
+                    self._forward_pkt(pktid,(IPP2P,int(PP2P)),TTL-1, "", mit_address)
+                
+                # answer
+                IPP2P = IPP2P.split('|')
+                rensponse_socket = self.connect2peer((IPP2P[random.choice([0,1])],int(PP2P)))
+                rensponse_socket.send(b'ANEA')
+                rensponse_socket.send(pktid.encode())
+                IP = self.IPP2P_v4 + "|" + self.IPP2P_v6
+                rensponse_socket.send(IP.encode())
+                rensponse_socket.send(self.PP2P.encode())
 
         except Exception as e:
             print("Error occurs during near peer research.")
@@ -215,23 +228,20 @@ class nodeGNutella(nodeP2P):
 
         if research != "":
             research = research.ljust(20)
-            
 
-            # BISOGNERÀ FARE IN MODO CHE NON REINVII AL MITTENTE
             for near in self.near_peer:
                 if not self.is_same_peer( mittent, (near[0].split('|')[0], near[1]) ) and not self.is_same_peer( mittent, (near[0].split('|')[1], near[1]) ):
                     try:
-                        if self.pktid_track.check_pkt(pktid,near):
-                            connection_socket = self.connect2peer( (near[0].split('|')[random.choice([0,1])], near[1]) )
-                            connection_socket.send(b'QUER')
-                            connection_socket.send(pktid.encode())
-                            connection_socket.send(addr[0].encode())
-                            #connection_socket.send("|".encode())
-                            port_string = '%05d' %addr[1]
-                            connection_socket.send(port_string.encode())
-                            TTL_string = '%02d' %TTL
-                            connection_socket.send(TTL_string.encode())
-                            connection_socket.sendall(research)
+                        connection_socket = self.connect2peer( (near[0].split('|')[random.choice([0,1])], near[1]) )
+                        connection_socket.send(b'QUER')
+                        connection_socket.send(pktid.encode())
+                        connection_socket.send(addr[0].encode())
+                        #connection_socket.send("|".encode())
+                        port_string = '%05d' %addr[1]
+                        connection_socket.send(port_string.encode())
+                        TTL_string = '%02d' %TTL
+                        connection_socket.send(TTL_string.encode())
+                        connection_socket.sendall(research.encode())
 
                     except Exception:
                         pass
@@ -243,16 +253,15 @@ class nodeGNutella(nodeP2P):
             for near in self.near_peer:
                 if not self.is_same_peer( mittent, (near[0].split('|')[0], near[1]) ) and not self.is_same_peer( mittent, (near[0].split('|')[1], near[1]) ):
                     try:
-                        if self.pktid_track.check_pkt(pktid,near):
-                            connection_socket = self.connect2peer( (near[0].split('|')[random.choice([0,1])], near[1]) )
-                            connection_socket.send(b'NEAR')
-                            connection_socket.send(pktid.encode())
-                            connection_socket.send(addr[0].encode())
-                            #connection_socket.send("|".encode())
-                            port_string = '%05d' %addr[1]
-                            connection_socket.send(port_string.encode())
-                            TTL_string = '%02d' %TTL
-                            connection_socket.sendall(TTL_string.encode())
+                        connection_socket = self.connect2peer( (near[0].split('|')[random.choice([0,1])], near[1]) )
+                        connection_socket.send(b'NEAR')
+                        connection_socket.send(pktid.encode())
+                        connection_socket.send(addr[0].encode())
+                        #connection_socket.send("|".encode())
+                        port_string = '%05d' %addr[1]
+                        connection_socket.send(port_string.encode())
+                        TTL_string = '%02d' %TTL
+                        connection_socket.sendall(TTL_string.encode())
 
                     except Exception:
                         pass
@@ -260,16 +269,17 @@ class nodeGNutella(nodeP2P):
                         if not connection_socket is None:
                             connection_socket.close()
 
+
     def NEAR_research(self):
         letters = ascii_uppercase + digits
         pktid = ''.join(random.choice(letters) for i in range(16))
         port = '%05d' %self.port_generator.give_port()
-        self.pktid_track.check_pkt(pktid,(self.IPP2P_v4 + "|" + self.IPP2P_v6, port)) # serve solo per evitare reinvii da parte mia
+        self.pktid_track.check_pkt(pktid) # serve solo per evitare reinvii da parte mia
         pkt = b'NEAR' + pktid.encode() + self.IPP2P_v4.encode() + "|".encode() + self.IPP2P_v6.encode() + port.encode() + "02".encode()
         for peer in self.near_peer:
             try:
                 connection = self.connect2peer( (peer[0].split('|')[random.choice([0,1])], peer[1]) )
-                connection.send(pkt)
+                connection.sendall(pkt)
             except Exception:
                 pass
             finally:
@@ -312,11 +322,8 @@ class nodeGNutella(nodeP2P):
                     conn.close()
         
         with self.lock:
-            set_near = set(self.near_peer)
-            set_received_near = set(received_near)
-
-            set_new_near = set_received_near - set_near
-            self.near_peer += list(set_new_near)
+            if received_near:
+                self.near_peer = received_near
 
         print("Finded near peer:")
         for near in self.near_peer:
@@ -328,23 +335,23 @@ class nodeGNutella(nodeP2P):
     def QUER_research(self):
         letters = ascii_uppercase + digits
         pktid = ''.join(random.choice(letters) for i in range(16))
-        port = '%05d' %self.port_generator.give_port
-        self.pktid_track.check_pkt(pktid,(self.IPP2P_v4 + "|" + self.IPP2P_v6, port)) # serve solo per evitare reinvii da parte mia
+        port = '%05d' %self.port_generator.give_port()
+        self.pktid_track.check_pkt(pktid) # serve solo per evitare reinvii da parte mia
         
         research = input("Insert the name of file: ")
         
-        pkt = b'QUER' + pktid.encode() + self.IPP2P_v4.encode + "|".encode() + self.IPP2P_v6.encode() + port.encode() + "10".encode() + research.ljust(20).encode()
+        research_thread = threading.Thread(target=self._quer_research_thread, args=(port,))
+        research_thread.start()
+
+        pkt = b'QUER' + pktid.encode() + self.IPP2P_v4.encode() + "|".encode() + self.IPP2P_v6.encode() + port.encode() + "10".encode() + research.ljust(20).encode()
         for peer in self.near_peer:
             try:
-                connection, address = self.connect2peer( (peer[0].split('|')[random.choice([0,1])], peer[1]) )
-                connection.send(pkt)
+                connection = self.connect2peer( (peer[0].split('|')[random.choice([0,1])], peer[1]) )
+                connection.sendall(pkt)
             except Exception:
                 pass
             finally:
                 connection.close()
-
-        research_thread = threading.Thread(target=self._quer_research_thread, args=(port,))
-        research_thread.start()
 
     def _quer_research_thread(self, port):
         try:
@@ -361,6 +368,8 @@ class nodeGNutella(nodeP2P):
         start_time = int(time.time())
         received_peer = []
 
+        server_sock.settimeout(1)
+        conn = None
         while((int(time.time()) - self.pktid_track.get_listen_time()) < start_time):
             try:
                 conn,addr = server_sock.accept()
@@ -372,15 +381,16 @@ class nodeGNutella(nodeP2P):
                 port = int(recvall(conn,5).decode())
                 file_md5 = recvall(conn,32).decode()
                 file_name = recvall(conn,100).decode().strip()
-                received_peer.append((ip_complete, port, file_md5, file_name))
+                received_peer.append( (ip_complete, port, file_md5, file_name) )
             except:
                 pass
             finally:
-                conn.close()
+                if conn:
+                    conn.close()
         
         print("Finded peer for the selected file:")
         for near in received_peer:
-            print("\tIP: " + near[0] + "\tPORT: " + near[1] + "\n\t\tfile name: " + near[3] + "\t md5: " + near[2])
+            print(" @ IP: ", near[0], "\tPORT: ", near[1], "\n\t", "-> file name: ", near[3], "\t md5: ", near[2])
         print("$> ", end='')
         sys.stdout.flush()
 
@@ -409,3 +419,83 @@ class nodeGNutella(nodeP2P):
             raise e
 
         return False
+
+    def download_file(self):
+        file2download = input("Insert the md5 of the file that you want to download: ")
+        peer_address = input("Insert the IP address (IPv4|IPv6) of the selected peer: ")
+        
+        peer_port = input("Insert the port of the selected peer: ")
+        file_name = input("Insert the file name: ")
+
+        try:
+            if not os.path.isdir("Downloads"):
+                os.mkdir("Downloads")
+        except Exception:
+            print("Error occurs.")
+            self.quitEvent.set()
+            sys.exit(1)
+        
+        peer_address = peer_address.split('|')
+
+        # connection at the peer server for file download
+        random.shuffle(peer_address) # random choise between ipv4 and ipv6
+        address = (peer_address[0],peer_port)
+        print("Try to connect at", address[0])
+        
+        try:
+            peer_peer_socket = self.connect2peer(address)
+
+        except Exception:
+            peer_peer_socket = None
+        try:
+            if peer_peer_socket is None:
+                address = (peer_address[1],peer_port)
+                print("Connection refused. Try to connect at", address[0])
+                peer_peer_socket = self.connect2peer(address)
+            
+        except Exception:
+            peer_peer_socket = None
+
+        if peer_peer_socket is None:
+            print("Connection failed.")
+            print("$> ", end='')
+            sys.stdout.flush()
+
+        pkt = "RETR"+ file2download
+        peer_peer_socket.sendall(pkt.encode())
+        try:
+            downloaded_file = open("Downloads/"+file_name,"wb")
+            downloaded_file.seek(0)
+
+            recvall(peer_peer_socket, 4)
+            Nchunk_string = recvall(peer_peer_socket, 6).decode()
+            #print(Nchunk_string)
+            Nchunk = int(Nchunk_string)
+            for i in range(Nchunk):
+
+                # Download state bar
+                if Nchunk > 40 and i%int(Nchunk/40) == 0:
+                    print("#",sep='',end='')
+                    sys.stdout.flush()
+                elif Nchunk <= 40:
+                    print("#",sep='',end='')
+                    sys.stdout.flush()
+
+                len_chunk_string = recvall(peer_peer_socket, 5).decode()
+                len_chunk = int(len_chunk_string)
+
+                chunk = recvall(peer_peer_socket, len_chunk)
+
+                downloaded_file.write(chunk) 
+            
+            print("\nFile successfully downloaded")
+            print("$> ", end='')
+            sys.stdout.flush()
+        except OSError:
+            print("Error occurs during the download")
+            print("$> ", end='')
+            sys.stdout.flush()
+        finally:
+            if not downloaded_file.closed:
+                downloaded_file.close()
+            peer_peer_socket.close()
