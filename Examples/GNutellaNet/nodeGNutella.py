@@ -15,7 +15,7 @@ class nodeGNutella(nodeP2P):
     def __init__(self,IPP2P_v4,IPP2P_v6,PP2P):
         super().__init__(IPP2P_v4,IPP2P_v6,PP2P)
         self.lock = threading.Lock()
-        self.port_generator = portFinder(min_port=50000, max_port=60000)
+        self.port_generator = portFinder(min_port=50000, max_port=51000)
     
     def server_function(self, connection, address):
 
@@ -210,7 +210,7 @@ class nodeGNutella(nodeP2P):
                 rensponse_socket.send(pktid.encode())
                 IP = self.IPP2P_v4 + "|" + self.IPP2P_v6
                 rensponse_socket.send(IP.encode())
-                rensponse_socket.send(self.PP2P.encode())
+                rensponse_socket.sendall(self.PP2P.encode())
 
         except Exception as e:
             print("Error occurs during near peer research.")
@@ -271,11 +271,15 @@ class nodeGNutella(nodeP2P):
 
 
     def NEAR_research(self):
+
         letters = ascii_uppercase + digits
         pktid = ''.join(random.choice(letters) for i in range(16))
         port = '%05d' %self.port_generator.give_port()
         self.pktid_track.check_pkt(pktid) # serve solo per evitare reinvii da parte mia
         pkt = b'NEAR' + pktid.encode() + self.IPP2P_v4.encode() + "|".encode() + self.IPP2P_v6.encode() + port.encode() + "02".encode()
+        
+        research_thread = threading.Thread(target=self._near_research_thread, args=(port,))
+        research_thread.start()
         for peer in self.near_peer:
             try:
                 connection = self.connect2peer( (peer[0].split('|')[random.choice([0,1])], peer[1]) )
@@ -285,8 +289,6 @@ class nodeGNutella(nodeP2P):
             finally:
                 connection.close()
 
-        research_thread = threading.Thread(target=self._near_research_thread, args=(port,))
-        research_thread.start()
 
     def _near_research_thread(self, port):
         try:
@@ -303,7 +305,7 @@ class nodeGNutella(nodeP2P):
         start_time = int(time.time())
         received_near = []
 
-        server_sock.settimeout(1)
+        server_sock.settimeout(3)
         conn = None
         while((int(time.time()) - self.pktid_track.get_listen_time()) < start_time):
             try:
@@ -368,7 +370,7 @@ class nodeGNutella(nodeP2P):
         start_time = int(time.time())
         received_peer = []
 
-        server_sock.settimeout(1)
+        server_sock.settimeout(3)
         conn = None
         while((int(time.time()) - self.pktid_track.get_listen_time()) < start_time):
             try:
