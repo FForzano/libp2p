@@ -8,11 +8,12 @@ from string import ascii_uppercase, digits
 from portFinder import portFinder
 
 class supernodeKazaa(nodeKazaa):
-    def __init__(self,IPP2P_v4,IPP2P_v6, near_file):
-        super().__init__(IPP2P_v4,IPP2P_v6,'03000', near_file)
+    def __init__(self,IPP2P_v4,IPP2P_v6, PP2P, near_file):
+        super().__init__(IPP2P_v4,IPP2P_v6,PP2P, near_file)
         self.logged_peers = {}
         self.peer4files = {}
         self.file_names = {}
+        self.supernodes = self._read_near(near_file)
     
     def _function_SUPE_server(self, connection, mit_address):
         try:
@@ -21,14 +22,15 @@ class supernodeKazaa(nodeKazaa):
             port = recvall(connection, 5).decode()
             ttl = recvall(connection, 2).decode()
 
-            self._forward_pkt(pktid, (ip, int(port)), int(ttl)-1, "_supe_research", mit_address)
-
-            response_socket = self.connect2peer( (ip.split('|')[random.choice([0,1])], int(port)) )
-            response_socket.sendall( b'ASUP' + pktid.encode() + self.IPP2P_v4.encode() + b'|' + self.IPP2P_v6.encode() + self.PP2P.encode() )
-            response_socket.close()
+            if self.pktid_track.check_pkt(pktid):
+                self._forward_pkt(pktid, (ip, int(port)), int(ttl)-1, "_supe_research", mit_address)
+                # print("responding to supe")
+                response_socket = self.connect2peer( (ip.split('|')[random.choice([0,1])], int(port)) )
+                response_socket.sendall( b'ASUP' + pktid.encode() + self.IPP2P_v4.encode() + b'|' + self.IPP2P_v6.encode() + self.PP2P.encode() )
+                response_socket.close()
         except Exception as e:
             print("Error occurs during supe server elaboration.")
-            print("$>", end='')
+            print("$> ", end='')
             sys.stdout.flush()
         finally:
             if not connection is None:
@@ -189,23 +191,40 @@ class supernodeKazaa(nodeKazaa):
             port = '%05d' %self.port_generator.give_port()
             self.pktid_track.check_pkt(pktid) # serve solo per evitare reinvii da parte mia
             
-            research_thread = threading.Thread(target=self._quer_research_thread, args=(port,))
-            research_thread.start()
+            research_thread = None
+            try:
+                research_thread = threading.Thread(target=self._quer_research_thread, args=(port,))
+                research_thread.start()
+            except Exception as e:
+                print("Error in _quer_research_thread start.\n", e)
+                print('$> ', end='')
+                sys.stdout.flush()
 
+            self.pktid_track.check_pkt(pktid)
             pkt = b'QUER' + pktid.encode() + self.IPP2P_v4.encode() + "|".encode() + self.IPP2P_v6.encode() + port.encode() + "10".encode() + research_string.ljust(20).encode()
             for peer in self.supernodes:
+                # print("try to request to ", peer, "\n$> ", end='')
+                # sys.stdout.flush()
+                connection_sup = None
+                choosen_ip = peer[0].split('|')[random.choice([0,1])]
                 try:
-                    connection = self.connect2peer( (peer[0].split('|')[random.choice([0,1])], peer[1]) )
-                    connection.sendall(pkt)
-                except Exception:
-                    pass
+                    connection_sup = self.connect2peer( (choosen_ip, peer[1]) )
+                    connection_sup.sendall(pkt)
+                    # print("send QUER to ", peer[0], peer[1])
+                    # print('$> ', end='')
+                    # sys.stdout.flush()
+                except Exception as e:
+                    print("Error in connection with", choosen_ip, peer[1])
+                    print('$> ', end='')
+                    sys.stdout.flush()
                 finally:
-                    connection.close()
+                    if connection_sup is not None:
+                        connection_sup.close()
 
             research_thread.join()
+            # print("Received files:\n",self.finded_files)
 
             # Here i have self.finded_files of the other peer's files
-
             for file_md5,file_n in self.file_names.items():
                 if research_string.lower().strip() in file_n.lower().strip():
 
@@ -222,26 +241,40 @@ class supernodeKazaa(nodeKazaa):
 
             # invio tutto
             
+            # print("Finded files:")
+            # print(self.finded_files)
+            # print('$> ', end='')
+            # sys.stdout.flush()
+
             connection.send(b'AFIN')
 
+            # print("Sending to the peer:")
             # self.finded_files = {} --> {md5:[file_name, [(ip,port), (ip,port), ...] ]}
-            idmd5 = len( self.finded_files.keys() )
+            idmd5 = len(self.finded_files)
             idmd5_string = '%03d' %idmd5
+            # print(idmd5_string, end='')
             connection.send( idmd5_string.encode() )
+            # print("Finded files number in superpeer:", idmd5_string)
+            # print("Finded files in superpeer:\n", self.finded_files)
 
             for md5, info in self.finded_files.items():
                 connection.send( md5.encode() )
-                connection.send( info[0].encode() )
+                # print(md5, end='')
+                connection.send( info[0].ljust(100).encode() )
+                # print(info[0], end='')
                 n_copy = '%03d' %len(info[1])
+                # print(n_copy, end='')
                 connection.send( n_copy.encode() )
 
                 for peer in info[1]:
+                    # print(peer[0], end='')
                     connection.send( peer[0].encode() )
                     pp = '%05d' %int(peer[1])
+                    # print(pp)
                     connection.sendall( pp.encode() )
         
-        except Exception:
-            print("Error in find server elaboration.")
+        except Exception as e:
+            print("Error in find server elaboration.\n", e)
             print("$> ", end='')
             sys.stdout.flush()
         finally:
@@ -250,6 +283,7 @@ class supernodeKazaa(nodeKazaa):
 
     
     def _function_QUER_server(self, connection, mit_address):
+        # print("Quer request")
         rensponse_socket = None
         try:
             pktid = recvall(connection, 16).decode()
@@ -268,20 +302,24 @@ class supernodeKazaa(nodeKazaa):
                 # check for file and send the answer
                 for md5 in self.shared_files.keys():
                     if research in self.shared_files[md5].strip():
-                        rensponse_socket = self.connect2peer((IPP2P.split('|')[random.choice([0,1])],int(PP2P)))
-                        rensponse_socket.send(b'AQUE')
-                        rensponse_socket.send(pktid.encode())
-                        IP = self.IPP2P_v4 + "|" + self.IPP2P_v6
-                        rensponse_socket.send(IP.encode())
-                        rensponse_socket.send(self.PP2P.encode())
-                        rensponse_socket.send(md5.encode())
-                        rensponse_socket.sendall(self.shared_files[md5].ljust(100).encode())
-
-                        rensponse_socket.close()
+                        for peerid in self.peer4files[md5]:
+                            rensponse_socket = self.connect2peer((IPP2P.split('|')[random.choice([0,1])],int(PP2P)))
+                            rensponse_socket.send(b'AQUE')
+                            rensponse_socket.send(pktid.encode())
+                            IP = self.logged_peers[peerid][0]
+                            rensponse_socket.send(IP.encode())
+                            rensponse_socket.send(self.logged_peers[peerid][1].encode())
+                            rensponse_socket.send(md5.encode())
+                            rensponse_socket.sendall(self.shared_files[md5].ljust(100).encode())
+                            
+                            # print("Send answer to ", IPP2P, PP2P)
+                            # print("$> ", end='')
+                            # sys.stdout.flush()
+                            rensponse_socket.close()
 
         except Exception as e:
-            print("Error occurs during query server elaboration.")
-            print("$>", end='')
+            print("Error occurs during query server elaboration.\n", e)
+            print("$> ", end='')
             sys.stdout.flush()
         finally:
             if not connection is None:
@@ -296,6 +334,7 @@ class supernodeKazaa(nodeKazaa):
         self.pktid_track.check_pkt(pktid) # serve solo per evitare reinvii da parte mia
 
         self.supernodes = []
+        connection = None
 
         pkt = b'SUPE' + pktid.encode() + self.IPP2P_v4.encode() + "|".encode() + self.IPP2P_v6.encode() + self.PP2P.encode() + "4".encode()
         for peer in self.near_peer:
@@ -305,7 +344,8 @@ class supernodeKazaa(nodeKazaa):
             except Exception:
                 pass
             finally:
-                connection.close()
+                if not connection is None:
+                    connection.close()
         
         for i in range(10):
             print("#", end='')
@@ -316,6 +356,12 @@ class supernodeKazaa(nodeKazaa):
         self.my_supernode = (self.IPP2P_v4 + '|' + self.IPP2P_v6, int(self.PP2P))
         print("Selected supernode is:")
         print("\tIPv4|IPv6:", self.my_supernode[0], "\tPort:", self.my_supernode[1])
+
+        default_supernodes = self._read_near(self.init_file)
+
+        for supern in default_supernodes:
+            if supern not in self.supernodes:
+                self.supernodes.append(supern)
 
     def _logout(self, sessionid):
         '''
@@ -374,6 +420,9 @@ class supernodeKazaa(nodeKazaa):
                 port = int(recvall(conn,5).decode())
                 file_md5 = recvall(conn,32).decode()
                 file_name = recvall(conn,100).decode().strip()
+                # print("Received answer:", ip_complete, port, file_md5, file_name)
+                # print('$>', end='')
+                # sys.stdout.flush()
                 received_peer.append( (ip_complete, port, file_md5, file_name) )
             except:
                 pass
@@ -383,7 +432,13 @@ class supernodeKazaa(nodeKazaa):
         
         for response in received_peer:
             if response[2] not in self.finded_files.keys():
-                self.finded_files[response[2]] = [response[3].ljust(100), [ (response[0], response[1]) ]]
+                self.finded_files[response[2]] = [response[3], [ (response[0], response[1]) ]]
             else:
-                self.finded_files[response[2]][0] = response[3].ljust(100)
+                self.finded_files[response[2]][0] = response[3]
                 self.finded_files[response[2]][1].append( (response[0], response[1]) )
+        
+        # print("finded files:")
+        # print(self.finded_files)
+        # print('$> ', end='')
+        # sys.stdout.flush()
+        sys.exit()

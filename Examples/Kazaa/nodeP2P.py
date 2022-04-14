@@ -1,4 +1,4 @@
-import socket, threading, ipaddress
+import socket, threading, ipaddress, sys
 
 class nodeP2P:
 
@@ -65,12 +65,16 @@ class nodeP2P:
                 #print("Try to accept connection for send file")
                 try:
                     peer_conn, peer_addr = server_sock.accept() # peer_conn is the connection socket, peer_addr is a tuple of (ip_addr,port,etc) 
-                    
+                    # print("Connection accepted to", peer_addr)
                     request_thread = threading.Thread(target=self.server_function,args=(peer_conn,peer_addr))
                     # creation of a new thread for the peer request
                     request_thread.start()
-                except socket.timeout:
+                except socket.timeout as e:
                     pass
+                except Exception as e:
+                    print("Error occurs in server accept.\n", e)
+                    print('$> ', end='')
+                    sys.stdout.flush()
         except Exception as e:
             raise e
         finally:
@@ -95,7 +99,7 @@ class nodeP2P:
         print("Please extends nodeP2P and implements this method")
 
 
-    def connect2peer(self, addr, timeout=True):
+    def connect2peer(self, addr, timeout=True, timeout_time=10):
         '''
         connect2peer(addr)
 
@@ -129,7 +133,7 @@ class nodeP2P:
                     
                     #sa = (address,int(peer_port)) # getaddrinfo get wrong address for ipv4...
                     peer_peer_socket = socket.socket(af, socktype, protocol)	# creazione tipo socket 
-                    peer_peer_socket.settimeout(10)
+                    peer_peer_socket.settimeout(timeout_time)
                     peer_peer_socket.connect(sa)
                     break
                 except socket.timeout:

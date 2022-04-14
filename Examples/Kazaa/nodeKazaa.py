@@ -14,15 +14,16 @@ class nodeKazaa(nodeP2P):
         self.lock = threading.Lock()
         self.port_generator = portFinder(min_port=50000, max_port=51000)
 
+        self.init_file = near_file
         self.sessionId = None
         self.my_supernode = None
         self.shared_files = {} # {md5:file_name}
         self.near_peer = self._read_near(near_file) # [addr1,addr2,...] --> addr=(IP,Port:int)
         self.pktid_track = pktTracker(listen_time=20)
 
-        # Ricerca del supernodo di riferimento
-        print("I'm searching the supernode...")
-        self.select_supernode()
+        # # Ricerca del supernodo di riferimento
+        # print("I'm searching the supernode...")
+        # self.select_supernode()
     
     def server_function(self, connection, address):
 
@@ -63,6 +64,7 @@ class nodeKazaa(nodeP2P):
                 elif instruction == "QUER":
                     self._function_QUER_server(connection, address)
             
+                sys.exit()
             except Exception:
                 pass
             finally:
@@ -158,7 +160,7 @@ class nodeKazaa(nodeP2P):
 
             self._forward_pkt(pktid, (ip, int(port)), int(ttl)-1, "_supe_research", mit_address)
         except Exception as e:
-            print("Error occurs during supe server elaboration.")
+            print("Error occurs during supe server elaboration.\n", e)
             print("$> ", end='')
             sys.stdout.flush()
         finally:
@@ -172,9 +174,10 @@ class nodeKazaa(nodeP2P):
             port = recvall(connection, 5).decode()
 
             self.supernodes.append( (ip, int(port)) )
+            # print( (ip, int(port)) )
 
         except Exception as e:
-            print("Error occurs during asup server elaboration.")
+            print("Error occurs during asup server elaboration.\n",e)
             print("$> ", end='')
             sys.stdout.flush()
         finally:
@@ -271,10 +274,15 @@ class nodeKazaa(nodeP2P):
         elif research != "":
             research = research.ljust(20)
 
-            for near in self.near_peer:
+            for near in self.supernodes:
+                # print("Request resend to", near)
+                # print("$> ", end='')
+                # sys.stdout.flush()
                 if not self.is_same_peer( mittent, (near[0].split('|')[0], near[1]) ) and not self.is_same_peer( mittent, (near[0].split('|')[1], near[1]) ):
                     try:
-                        connection_socket = self.connect2peer( (near[0].split('|')[random.choice([0,1])], near[1]) )
+                        ipp = near[0].split('|')[random.choice([0,1])]
+                        # print("Try to connecting", ipp)
+                        connection_socket = self.connect2peer( (ipp, near[1]), timeout_time=20 )
                         connection_socket.send(b'QUER')
                         connection_socket.send(pktid.encode())
                         connection_socket.send(addr[0].encode())
@@ -285,14 +293,17 @@ class nodeKazaa(nodeP2P):
                         connection_socket.send(TTL_string.encode())
                         connection_socket.sendall(research.encode())
 
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print("Unattainable peer", near)
+                        print(e)
+                        print('$> ', end='')
+                        sys.stdout.flush()
                     finally:
                         if not connection_socket is None:
                             connection_socket.close()
         
         else: 
-            for near in self.near_peer:
+            for near in self.supernodes:
                 if not self.is_same_peer( mittent, (near[0].split('|')[0], near[1]) ) and not self.is_same_peer( mittent, (near[0].split('|')[1], near[1]) ):
                     try:
                         connection_socket = self.connect2peer( (near[0].split('|')[random.choice([0,1])], near[1]) )
@@ -322,7 +333,7 @@ class nodeKazaa(nodeP2P):
 
         self.supernodes = []
 
-        pkt = b'SUPE' + pktid.encode() + self.IPP2P_v4.encode() + "|".encode() + self.IPP2P_v6.encode() + self.PP2P.encode() + "4".encode()
+        pkt = b'SUPE' + pktid.encode() + self.IPP2P_v4.encode() + "|".encode() + self.IPP2P_v6.encode() + self.PP2P.encode() + "04".encode()
         for peer in self.near_peer:
             try:
                 connection = self.connect2peer( (peer[0].split('|')[random.choice([0,1])], peer[1]) )
@@ -336,13 +347,24 @@ class nodeKazaa(nodeP2P):
             print("#", end='')
             sys.stdout.flush()
             time.sleep(2)
-        
+
         self.my_supernode = random.choice(self.supernodes)
-        print("Selected supernode is:")
+        print("\nSelected supernode is:")
         print("\tIPv4|IPv6:", self.my_supernode[0], "\tPort:", self.my_supernode[1])
+
+        default_supernodes = self._read_near(self.init_file)
+
+        for supern in default_supernodes:
+            if supern not in self.supernodes:
+                self.supernodes.append(supern)
 
     def login(self):
         try:
+            if not self.my_supernode:
+                # Ricerca del supernodo di riferimento
+                print("I'm searching the supernode...")
+                self.select_supernode()
+
             supernode_socket = self.connect2peer(self.my_supernode)
             supernode_socket.sendall("LOGI".encode() + self.IPP2P_v4.encode() + b'|' + self.IPP2P_v6.encode() + self.PP2P.encode())
             recvall(supernode_socket,4)
@@ -522,9 +544,13 @@ class nodeKazaa(nodeP2P):
 
         find_thread = threading.Thread(target=self._find_files_thread, args=(research_string,))
         find_thread.start()
+        find_thread.join()
 
     def _find_files_thread(self, research_string):
         try:
+            # print("Start thread for answer")
+            print("$> ", end='')
+            sys.stdout.flush()
             supernode_socket = self.connect2peer(self.my_supernode, timeout=False)
             supernode_socket.sendall(b'FIND' + self.sessionId.encode() + research_string.ljust(20).encode())
             if recvall(supernode_socket,4) != b'AFIN':
@@ -534,14 +560,17 @@ class nodeKazaa(nodeP2P):
                 return
             
             nfile = int(recvall(supernode_socket,3))
+            # print("Number of finded file:", nfile)
             if nfile == 0:
                 print("File not found in the directory")
                 print("$> ",end='')
                 sys.stdout.flush()
                 return
+            print("Number of finded files:", nfile)
 
             for i in range(nfile):
                 current_md5 = recvall(supernode_socket,32).decode()
+                # print("md5:", current_md5)
                 current_filename = recvall(supernode_socket,100).decode()
                 ncopy = int(recvall(supernode_socket,3))
                 print("--> File name:", current_filename.strip(), "\tmd5 checksum:", current_md5)
@@ -554,7 +583,7 @@ class nodeKazaa(nodeP2P):
                 print("$> ", end='')
                 sys.stdout.flush()
                 
-
+            sys.exit()
         except Exception as e:
             print("Error occurs in file research", e)
             print("$> ", end='')
@@ -574,6 +603,7 @@ class nodeKazaa(nodeP2P):
             while line:
                 info = line.split(',')
                 nears.append( (info[0].strip(), int(info[1].strip())) )
+                line = file.readline()
         return nears
 
 

@@ -11,7 +11,7 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "args": ["172.16.0.22", "fc00::1004", "config_file.myconfig"]
+            "args": ["172.16.0.22", "fc00::1004","03000" , "local_supernode1.myconfig"]
         }
     ]
 }
