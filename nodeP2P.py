@@ -1,16 +1,20 @@
-import socket, threading
+import socket, threading, ipaddress, sys
 
 class nodeP2P:
 
     def __init__(self,IPP2P_v4,IPP2P_v6,PP2P):
-        self.IPP2P_v4 = IPP2P_v4
-        self.IPP2P_v6 = IPP2P_v6
-        self.PP2P = PP2P
+        self.IPP2P_v6 = ipaddress.ip_address(IPP2P_v6)
+        self.IPP2P_v4 = '%03d' %int(IPP2P_v4.split('.')[0]) + '.' + '%03d' %int(IPP2P_v4.split('.')[1]) + '.' + '%03d' %int(IPP2P_v4.split('.')[2]) + '.' + '%03d' %int(IPP2P_v4.split('.')[3])
+        self.IPP2P_v6 = self.IPP2P_v6.exploded
+        self.PP2P = '%05d' %int(PP2P)
+
         self.quitEvent = threading.Event()
+        self.server_status = False
     
     def start(self):
         try:
             self._start_server()
+            self.server_status = True
             self._start_client()
         except Exception as e:
             raise e
@@ -39,6 +43,11 @@ class nodeP2P:
             print("Waiting for terminating the upload request")
             self.peer_server.join(timeout=1)
 
+    def restart_server(self):
+        self.quitEvent.clear()
+        self.server_status = True
+        self._start_server()
+
 
     def _peer_server_thread(self):
         '''
@@ -63,18 +72,25 @@ class nodeP2P:
                 #print("Try to accept connection for send file")
                 try:
                     peer_conn, peer_addr = server_sock.accept() # peer_conn is the connection socket, peer_addr is a tuple of (ip_addr,port,etc) 
-
-                    request_thread = threading.Thread(target=self.server_function,args=(peer_conn,))
+                    # print("Connection accepted to", peer_addr)
+                    request_thread = threading.Thread(target=self.server_function,args=(peer_conn,peer_addr))
                     # creation of a new thread for the peer request
                     request_thread.start()
-                except socket.timeout:
+                except socket.timeout as e:
                     pass
+                except Exception as e:
+                    print("Error occurs in server accept.\n", e)
+                    print('$> ', end='')
+                    sys.stdout.flush()
+            
+            self.server_status = False
+
         except Exception as e:
             raise e
         finally:
             server_sock.close()
 
-    def server_function(self, connection):
+    def server_function(self, connection, address):
         '''
         server_function implements the peer server functionality.
         connection is the accepted connection with another peer.
@@ -93,7 +109,7 @@ class nodeP2P:
         print("Please extends nodeP2P and implements this method")
 
 
-    def connect2peer(self, addr):
+    def connect2peer(self, addr, timeout=True, timeout_time=10):
         '''
         connect2peer(addr)
 
@@ -102,6 +118,11 @@ class nodeP2P:
         ('::1', 1000).
         The return value is the connection socket with the selected peer.
         '''
+
+        if '|' in addr[0]:
+            temp = addr[0].split('|')
+            import random
+            addr = (temp[random.choice([0,1])], addr[1])
 
         ip = ''
         if addr[0].find(':') == -1:
@@ -122,7 +143,7 @@ class nodeP2P:
                     
                     #sa = (address,int(peer_port)) # getaddrinfo get wrong address for ipv4...
                     peer_peer_socket = socket.socket(af, socktype, protocol)	# creazione tipo socket 
-                    peer_peer_socket.settimeout(10)
+                    peer_peer_socket.settimeout(timeout_time)
                     peer_peer_socket.connect(sa)
                     break
                 except socket.timeout:
@@ -138,6 +159,9 @@ class nodeP2P:
 
         if peer_peer_socket is None:
             raise socket.error("Connection refused.")
+
+        if not timeout:
+            peer_peer_socket.settimeout(None)
         
         return peer_peer_socket
 
